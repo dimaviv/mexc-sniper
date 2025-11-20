@@ -64,3 +64,10 @@ min_price = 0.01
 # Strategy4 also uses [orderbook] thresholds:
 # - min_thick_depth_usdt
 # - max_spread_pct
+
+[strategy5]
+enabled = true
+# Ultra-strict strategy: Requires ALL 4 conditions to be met simultaneously
+# Uses thresholds from strategies 1-4 above
+# Extremely rare signals with highest confidence
+min_price = 0.01

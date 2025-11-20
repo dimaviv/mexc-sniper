@@ -12,6 +12,7 @@ pub struct Config {
     pub strategy2: Strategy2Config,
     pub strategy3: Strategy3Config,
     pub strategy4: Strategy4Config,
+    pub strategy5: Strategy5Config,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -72,6 +73,12 @@ pub struct Strategy4Config {
     pub enabled: bool,
     pub spread_ratio_min: f64,
     pub min_abs_diff: f64,
+    pub min_price: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Strategy5Config {
+    pub enabled: bool,
     pub min_price: f64,
 }
 

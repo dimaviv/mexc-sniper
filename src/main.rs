@@ -6,7 +6,7 @@ mod utils;
 
 use crate::api::{MexcRestClient, MexcWebSocketClient};
 use crate::config::Config;
-use crate::detection::{Strategy1, Strategy2, Strategy3, Strategy4};
+use crate::detection::{Strategy1, Strategy2, Strategy3, Strategy4, Strategy5};
 use crate::models::{MarketEvent, SymbolData};
 use crate::utils::EpisodeLogger;
 use dashmap::DashMap;
@@ -59,6 +59,7 @@ async fn main() -> anyhow::Result<()> {
     let logger2 = Arc::new(EpisodeLogger::new(&config.general.log_dir, "strategy2")?);
     let logger3 = Arc::new(EpisodeLogger::new(&config.general.log_dir, "strategy3")?);
     let logger4 = Arc::new(EpisodeLogger::new(&config.general.log_dir, "strategy4")?);
+    let logger5 = Arc::new(EpisodeLogger::new(&config.general.log_dir, "strategy5")?);
 
     info!("Episode loggers initialized");
 
@@ -88,7 +89,18 @@ async fn main() -> anyhow::Result<()> {
         logger4,
     );
 
-    info!("Detection strategies initialized");
+    let mut strategy5 = Strategy5::new(
+        config.strategy5.clone(),
+        config.strategy1.clone(),
+        config.strategy2.clone(),
+        config.strategy3.clone(),
+        config.strategy4.clone(),
+        config.orderbook.clone(),
+        config.cooldowns.per_symbol_seconds,
+        logger5,
+    );
+
+    info!("Detection strategies initialized (including Strategy5: Ultra-Strict)");
 
     // Create WebSocket client
     let ws_client = MexcWebSocketClient::new(
@@ -156,6 +168,7 @@ async fn main() -> anyhow::Result<()> {
                     &mut strategy2,
                     &mut strategy3,
                     &mut strategy4,
+                    &mut strategy5,
                 );
             }
             _ = tokio::signal::ctrl_c() => {
@@ -178,6 +191,7 @@ fn handle_market_event(
     strategy2: &mut Strategy2,
     strategy3: &mut Strategy3,
     strategy4: &mut Strategy4,
+    strategy5: &mut Strategy5,
 ) {
     match event {
         MarketEvent::TickerUpdate {
@@ -198,6 +212,7 @@ fn handle_market_event(
                 strategy2.check(&data);
                 strategy3.check(&data);
                 strategy4.check(&data);
+                strategy5.check(&data);
             }
         }
         MarketEvent::MarkPriceUpdate {
@@ -213,14 +228,16 @@ fn handle_market_event(
                 strategy2.check(&data);
                 strategy3.check(&data);
                 strategy4.check(&data);
+                strategy5.check(&data);
             }
         }
         MarketEvent::OrderbookUpdate { symbol, orderbook } => {
             if let Some(mut data) = symbol_data.get_mut(&symbol) {
                 data.update_orderbook(orderbook);
 
-                // Run strategy 4 which uses orderbook data
+                // Run strategies that use orderbook data
                 strategy4.check(&data);
+                strategy5.check(&data);
             }
         }
     }
