@@ -12,14 +12,15 @@ use crate::utils::EpisodeLogger;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use rand::{seq::IteratorRandom, SeedableRng};
+use tracing::{debug, error, info};
 use tracing_subscriber;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing
+    // Initialize tracing with debug level for more visibility
     tracing_subscriber::fmt()
-        .with_env_filter("mexc_sniper=info,warn,error")
+        .with_env_filter("mexc_sniper=debug")
         .init();
 
     info!("Starting MEXC Futures Pump Anomaly Detector");
@@ -152,6 +153,115 @@ async fn main() -> anyhow::Result<()> {
                             );
                         }
                     }
+                }
+            }
+        }
+    });
+
+    // Create periodic detailed trace logger (every 10 seconds, random symbol)
+    let symbol_data_for_trace = symbol_data.clone();
+    let config_for_trace = config.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
+        let mut rng = rand::rngs::SmallRng::from_os_rng();
+
+        loop {
+            interval.tick().await;
+
+            // Get symbols that have both prices available
+            let symbols_with_data: Vec<_> = symbol_data_for_trace
+                .iter()
+                .filter(|entry| {
+                    entry.value().current_last_price.is_some()
+                        && entry.value().current_mark_price.is_some()
+                })
+                .map(|entry| entry.key().clone())
+                .collect();
+
+            if symbols_with_data.is_empty() {
+                debug!("[TRACE] No symbols with complete price data yet");
+                continue;
+            }
+
+            // Pick a random symbol
+            let random_symbol = symbols_with_data.iter().choose(&mut rng);
+
+            if let Some(symbol) = random_symbol {
+                if let Some(data) = symbol_data_for_trace.get(symbol) {
+                    let last_price = data.current_last_price.unwrap();
+                    let mark_price = data.current_mark_price.unwrap();
+                    let ratio = last_price / mark_price;
+                    let abs_diff = last_price - mark_price;
+
+                    // Strategy thresholds from config
+                    let s1 = &config_for_trace.strategy1;
+                    let s2 = &config_for_trace.strategy2;
+                    let s3 = &config_for_trace.strategy3;
+                    let s4 = &config_for_trace.strategy4;
+
+                    // Check strategy conditions
+                    let s1_ratio_ok = ratio >= s1.spread_ratio_min;
+                    let s1_diff_ok = abs_diff >= s1.min_abs_diff;
+                    let s1_price_ok = last_price >= s1.min_price;
+                    let s1_triggered = s1.enabled && s1_ratio_ok && s1_diff_ok && s1_price_ok;
+
+                    let s2_ratio_ok = ratio >= s2.spread_ratio_min;
+                    let s2_price_ok = last_price >= s2.min_price;
+
+                    let s3_ratio_ok = ratio >= s3.spread_ratio_min;
+                    let s3_price_ok = last_price >= s3.min_price;
+
+                    let s4_ratio_ok = ratio >= s4.spread_ratio_min;
+                    let s4_diff_ok = abs_diff >= s4.min_abs_diff;
+                    let s4_price_ok = last_price >= s4.min_price;
+
+                    // Check orderbook data availability
+                    let has_orderbook = data.orderbook.is_some();
+
+                    info!("══════════════════════════════════════════════════════════════");
+                    info!("[TRACE] Random Symbol Check: {}", symbol);
+                    info!("├─ Last Price:    {:.6}", last_price);
+                    info!("├─ Mark Price:    {:.6}", mark_price);
+                    info!("├─ Ratio:         {:.6} (last/mark)", ratio);
+                    info!("├─ Abs Diff:      {:.6} (last - mark)", abs_diff);
+                    info!("├─ Orderbook:     {}", if has_orderbook { "Available" } else { "Not available" });
+                    info!("├─ Strategy1 [{}]:", if s1.enabled { "ON" } else { "OFF" });
+                    info!("│  ├─ Ratio >= {:.4}?  {} (actual: {:.6})",
+                        s1.spread_ratio_min,
+                        if s1_ratio_ok { "YES" } else { "NO" },
+                        ratio
+                    );
+                    info!("│  ├─ Diff >= {:.4}?   {} (actual: {:.6})",
+                        s1.min_abs_diff,
+                        if s1_diff_ok { "YES" } else { "NO" },
+                        abs_diff
+                    );
+                    info!("│  ├─ Price >= {:.4}? {} (actual: {:.6})",
+                        s1.min_price,
+                        if s1_price_ok { "YES" } else { "NO" },
+                        last_price
+                    );
+                    info!("│  └─ TRIGGERED:    {}", if s1_triggered { "YES" } else { "NO" });
+                    info!("├─ Strategy2 [{}]: Ratio {} | Price {}",
+                        if s2.enabled { "ON" } else { "OFF" },
+                        if s2_ratio_ok { "OK" } else { "NO" },
+                        if s2_price_ok { "OK" } else { "NO" }
+                    );
+                    info!("├─ Strategy3 [{}]: Ratio {} | Price {}",
+                        if s3.enabled { "ON" } else { "OFF" },
+                        if s3_ratio_ok { "OK" } else { "NO" },
+                        if s3_price_ok { "OK" } else { "NO" }
+                    );
+                    info!("├─ Strategy4 [{}]: Ratio {} | Diff {} | Price {}",
+                        if s4.enabled { "ON" } else { "OFF" },
+                        if s4_ratio_ok { "OK" } else { "NO" },
+                        if s4_diff_ok { "OK" } else { "NO" },
+                        if s4_price_ok { "OK" } else { "NO" }
+                    );
+                    info!("└─ Strategy5 [{}]: Combines all above conditions",
+                        if config_for_trace.strategy5.enabled { "ON" } else { "OFF" }
+                    );
+                    info!("══════════════════════════════════════════════════════════════");
                 }
             }
         }

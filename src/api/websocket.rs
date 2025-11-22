@@ -70,16 +70,18 @@ impl MexcWebSocketClient {
             }
         });
 
-        // Subscribe to ticker (all symbols)
-        let ticker_sub = json!({
-            "method": "sub.ticker",
-            "param": {}
-        });
-        write_tx.send(Message::Text(ticker_sub.to_string()))?;
-        info!("Subscribed to ticker updates");
-
-        // Subscribe to mark price and orderbook for each symbol
+        // Subscribe to ticker, mark price, and orderbook for each symbol
         for symbol in &self.symbols {
+            // Subscribe to ticker for this symbol
+            let ticker_sub = json!({
+                "method": "sub.ticker",
+                "param": {
+                    "symbol": symbol
+                }
+            });
+            write_tx.send(Message::Text(ticker_sub.to_string()))?;
+
+            // Subscribe to fair/mark price for this symbol
             let mark_price_sub = json!({
                 "method": "sub.fair_price",
                 "param": {
@@ -88,6 +90,7 @@ impl MexcWebSocketClient {
             });
             write_tx.send(Message::Text(mark_price_sub.to_string()))?;
 
+            // Subscribe to orderbook depth for this symbol
             let depth_sub = json!({
                 "method": "sub.depth",
                 "param": {
@@ -98,7 +101,7 @@ impl MexcWebSocketClient {
             write_tx.send(Message::Text(depth_sub.to_string()))?;
         }
 
-        info!("Subscribed to {} symbols", self.symbols.len());
+        info!("Subscribed to ticker, fair_price, and depth for {} symbols", self.symbols.len());
 
         // Spawn heartbeat task
         let write_tx_clone = write_tx.clone();
@@ -178,7 +181,10 @@ impl MexcWebSocketClient {
                     }
                 }
                 _ => {
-                    debug!("Unknown channel: {}", channel);
+                    // Ignore subscription confirmations (rs.sub.*) and other non-data channels
+                    if !channel.starts_with("rs.") {
+                        debug!("Unknown channel: {}", channel);
+                    }
                 }
             }
         }
