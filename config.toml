@@ -27,7 +27,7 @@ max_spread_pct = 0.003
 [strategy1]
 enabled = true
 # Minimum ratio of last_price / mark_price
-spread_ratio_min = 1.15
+spread_ratio_min = 1.2
 # Minimum absolute price difference
 min_abs_diff = 0.0001
 # Minimum price to consider
@@ -71,3 +71,15 @@ enabled = true
 # Uses thresholds from strategies 1-4 above
 # Extremely rare signals with highest confidence
 min_price = 0.01
+
+[csv_export]
+# Enable CSV export of anomaly candle data
+enabled = true
+# Directory to store CSV files
+charts_dir = "charts"
+# How many seconds of data to include BEFORE anomaly detection
+pre_anomaly_buffer_secs = 10
+# How many seconds to continue recording AFTER anomaly ends
+post_anomaly_recording_secs = 10
+# Candle interval in milliseconds
+candle_interval_ms = 500

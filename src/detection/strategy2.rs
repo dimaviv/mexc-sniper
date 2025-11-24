@@ -1,5 +1,6 @@
 use crate::config::Strategy2Config;
 use crate::detection::EpisodeTracker;
+use crate::export::CsvExporter;
 use crate::models::SymbolData;
 use crate::utils::EpisodeLogger;
 use std::sync::Arc;
@@ -9,14 +10,24 @@ pub struct Strategy2 {
     config: Strategy2Config,
     tracker: EpisodeTracker,
     logger: Arc<EpisodeLogger>,
+    csv_exporter: Option<Arc<CsvExporter>>,
+    pre_buffer_secs: i64,
 }
 
 impl Strategy2 {
-    pub fn new(config: Strategy2Config, cooldown_seconds: u64, logger: Arc<EpisodeLogger>) -> Self {
+    pub fn new(
+        config: Strategy2Config,
+        cooldown_seconds: u64,
+        logger: Arc<EpisodeLogger>,
+        csv_exporter: Option<Arc<CsvExporter>>,
+        pre_buffer_secs: i64,
+    ) -> Self {
         Self {
             config,
             tracker: EpisodeTracker::new(cooldown_seconds),
             logger,
+            csv_exporter,
+            pre_buffer_secs,
         }
     }
 
@@ -68,6 +79,11 @@ impl Strategy2 {
                 "[Strategy2] 🚨 ANOMALY DETECTED: {} | Ratio: {:.4} | Spike: {:.4}x",
                 data.symbol, ratio, spike_ratio
             );
+
+            if let Some(ref exporter) = self.csv_exporter {
+                let pre_buffer_candles = data.candle_buffer.get_pre_buffer_candles(self.pre_buffer_secs);
+                exporter.start_recording(&data.symbol, "strategy2", pre_buffer_candles);
+            }
         }
 
         if let Some(episode) = episode_opt {
@@ -85,6 +101,10 @@ impl Strategy2 {
                     "[Strategy2] ✅ Episode ended: {} | Peak Ratio: {:.4}",
                     episode.symbol, episode.peak_ratio
                 );
+
+                if let Some(ref exporter) = self.csv_exporter {
+                    exporter.mark_anomaly_ended(&episode.symbol, "strategy2");
+                }
             }
         }
     }

@@ -113,7 +113,6 @@ impl MexcWebSocketClient {
                 if write_tx_clone.send(Message::Text(ping.to_string())).is_err() {
                     break;
                 }
-                debug!("Sent ping");
             }
         });
 
@@ -130,7 +129,7 @@ impl MexcWebSocketClient {
                     // Handled automatically by tungstenite
                 }
                 Ok(Message::Pong(_)) => {
-                    debug!("Received pong");
+                    // Handled automatically by tungstenite
                 }
                 Ok(Message::Close(_)) => {
                     warn!("WebSocket closed by server");
@@ -154,7 +153,6 @@ impl MexcWebSocketClient {
         // Check for pong
         if let Some(channel) = value.get("channel").and_then(|c| c.as_str()) {
             if channel == "pong" {
-                debug!("Received pong");
                 return Ok(());
             }
 
@@ -182,9 +180,6 @@ impl MexcWebSocketClient {
                 }
                 _ => {
                     // Ignore subscription confirmations (rs.sub.*) and other non-data channels
-                    if !channel.starts_with("rs.") {
-                        debug!("Unknown channel: {}", channel);
-                    }
                 }
             }
         }

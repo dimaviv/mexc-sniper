@@ -1,5 +1,6 @@
 use crate::config::{OrderbookConfig, Strategy4Config};
 use crate::detection::EpisodeTracker;
+use crate::export::CsvExporter;
 use crate::models::SymbolData;
 use crate::utils::EpisodeLogger;
 use std::sync::Arc;
@@ -10,6 +11,8 @@ pub struct Strategy4 {
     orderbook_config: OrderbookConfig,
     tracker: EpisodeTracker,
     logger: Arc<EpisodeLogger>,
+    csv_exporter: Option<Arc<CsvExporter>>,
+    pre_buffer_secs: i64,
 }
 
 impl Strategy4 {
@@ -18,12 +21,16 @@ impl Strategy4 {
         orderbook_config: OrderbookConfig,
         cooldown_seconds: u64,
         logger: Arc<EpisodeLogger>,
+        csv_exporter: Option<Arc<CsvExporter>>,
+        pre_buffer_secs: i64,
     ) -> Self {
         Self {
             config,
             orderbook_config,
             tracker: EpisodeTracker::new(cooldown_seconds),
             logger,
+            csv_exporter,
+            pre_buffer_secs,
         }
     }
 
@@ -97,6 +104,11 @@ impl Strategy4 {
                 "[Strategy4] 🚨 ANOMALY DETECTED: {} | Ratio: {:.4} | Thick Book: ${:.0}",
                 data.symbol, ratio, depth
             );
+
+            if let Some(ref exporter) = self.csv_exporter {
+                let pre_buffer_candles = data.candle_buffer.get_pre_buffer_candles(self.pre_buffer_secs);
+                exporter.start_recording(&data.symbol, "strategy4", pre_buffer_candles);
+            }
         }
 
         if let Some(episode) = episode_opt {
@@ -114,6 +126,10 @@ impl Strategy4 {
                     "[Strategy4] ✅ Episode ended: {} | Peak Ratio: {:.4}",
                     episode.symbol, episode.peak_ratio
                 );
+
+                if let Some(ref exporter) = self.csv_exporter {
+                    exporter.mark_anomaly_ended(&episode.symbol, "strategy4");
+                }
             }
         }
     }

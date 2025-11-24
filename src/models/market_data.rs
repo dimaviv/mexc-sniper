@@ -196,6 +196,199 @@ pub struct PriceSnapshot {
     pub timestamp: DateTime<Utc>,
 }
 
+/// Represents a candlestick (OHLCV) for a specific time window
+#[derive(Debug, Clone)]
+pub struct Candle {
+    pub timestamp_ms: i64,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub volume: f64,  // Note: Currently set to 0.0 as volume not available in WebSocket data
+}
+
+impl Candle {
+    pub fn from_single_price(timestamp: DateTime<Utc>, price: f64) -> Self {
+        Self {
+            timestamp_ms: timestamp.timestamp_millis(),
+            open: price,
+            high: price,
+            low: price,
+            close: price,
+            volume: 0.0,
+        }
+    }
+
+    pub fn update_price(&mut self, price: f64) {
+        if price > self.high {
+            self.high = price;
+        }
+        if price < self.low {
+            self.low = price;
+        }
+        self.close = price;
+    }
+}
+
+/// Accumulates price updates into 500ms candles
+#[derive(Debug, Clone)]
+pub struct CandleBuffer {
+    window_ms: i64,
+    current_window_start: Option<i64>,
+    current_last_price_candle: Option<Candle>,
+    current_mark_price_candle: Option<Candle>,
+    completed_last_price_candles: VecDeque<Candle>,
+    completed_mark_price_candles: VecDeque<Candle>,
+    last_known_last_price: Option<f64>,
+    last_known_mark_price: Option<f64>,
+}
+
+impl CandleBuffer {
+    pub fn new(window_ms: i64) -> Self {
+        Self {
+            window_ms,
+            current_window_start: None,
+            current_last_price_candle: None,
+            current_mark_price_candle: None,
+            completed_last_price_candles: VecDeque::new(),
+            completed_mark_price_candles: VecDeque::new(),
+            last_known_last_price: None,
+            last_known_mark_price: None,
+        }
+    }
+
+    pub fn add_price_update(&mut self, last_price: Option<f64>, mark_price: Option<f64>, timestamp: DateTime<Utc>) {
+        let ts_ms = timestamp.timestamp_millis();
+        let window_start = (ts_ms / self.window_ms) * self.window_ms;
+
+        // Check if we've moved to a new window
+        if let Some(current_start) = self.current_window_start {
+            if window_start > current_start {
+                // Complete the current candles and start new ones
+                self.complete_current_candles(current_start);
+
+                // Forward-fill any gaps with last known prices
+                let mut gap_start = current_start + self.window_ms;
+                let mut gap_count = 0;
+                while gap_start < window_start {
+                    self.forward_fill_candle(gap_start);
+                    gap_start += self.window_ms;
+                    gap_count += 1;
+                }
+            }
+        }
+
+        self.current_window_start = Some(window_start);
+
+        // Update last_price candle
+        if let Some(price) = last_price {
+            self.last_known_last_price = Some(price);
+            match &mut self.current_last_price_candle {
+                Some(candle) => candle.update_price(price),
+                None => {
+                    self.current_last_price_candle = Some(Candle::from_single_price(
+                        DateTime::from_timestamp_millis(window_start).unwrap_or(timestamp),
+                        price
+                    ));
+                }
+            }
+        }
+
+        // Update mark_price candle
+        if let Some(price) = mark_price {
+            self.last_known_mark_price = Some(price);
+            match &mut self.current_mark_price_candle {
+                Some(candle) => candle.update_price(price),
+                None => {
+                    self.current_mark_price_candle = Some(Candle::from_single_price(
+                        DateTime::from_timestamp_millis(window_start).unwrap_or(timestamp),
+                        price
+                    ));
+                }
+            }
+        }
+    }
+
+    fn complete_current_candles(&mut self, _window_start: i64) {
+        if let Some(candle) = self.current_last_price_candle.take() {
+            self.completed_last_price_candles.push_back(candle);
+        }
+        if let Some(candle) = self.current_mark_price_candle.take() {
+            self.completed_mark_price_candles.push_back(candle);
+        }
+
+        // Keep only last 20 seconds of completed candles (40 candles at 500ms each)
+        while self.completed_last_price_candles.len() > 40 {
+            self.completed_last_price_candles.pop_front();
+        }
+        while self.completed_mark_price_candles.len() > 40 {
+            self.completed_mark_price_candles.pop_front();
+        }
+    }
+
+    fn forward_fill_candle(&mut self, window_start: i64) {
+        let timestamp = DateTime::from_timestamp_millis(window_start).unwrap_or_else(Utc::now);
+
+        if let Some(price) = self.last_known_last_price {
+            self.completed_last_price_candles.push_back(Candle::from_single_price(timestamp, price));
+        }
+        if let Some(price) = self.last_known_mark_price {
+            self.completed_mark_price_candles.push_back(Candle::from_single_price(timestamp, price));
+        }
+    }
+
+    pub fn get_recent_candles(&self, seconds: i64) -> (Vec<Candle>, Vec<Candle>) {
+        let num_candles = (seconds * 1000 / self.window_ms) as usize;
+
+        let last_price_candles: Vec<Candle> = self.completed_last_price_candles
+            .iter()
+            .rev()
+            .take(num_candles)
+            .rev()
+            .cloned()
+            .collect();
+
+        let mark_price_candles: Vec<Candle> = self.completed_mark_price_candles
+            .iter()
+            .rev()
+            .take(num_candles)
+            .rev()
+            .cloned()
+            .collect();
+
+        (last_price_candles, mark_price_candles)
+    }
+
+    pub fn get_all_completed_candles(&self) -> (Vec<Candle>, Vec<Candle>) {
+        (
+            self.completed_last_price_candles.iter().cloned().collect(),
+            self.completed_mark_price_candles.iter().cloned().collect()
+        )
+    }
+
+    pub fn get_pre_buffer_candles(&self, seconds: i64) -> (Vec<Candle>, Vec<Candle>) {
+        let requested_count = (seconds * 1000 / self.window_ms) as usize;
+        let all_candles = self.get_all_completed_candles();
+
+        let last_len = all_candles.0.len();
+        let mark_len = all_candles.1.len();
+
+        let last_price_candles = if last_len > requested_count {
+            all_candles.0.into_iter().skip(last_len - requested_count).collect()
+        } else {
+            all_candles.0
+        };
+
+        let mark_price_candles = if mark_len > requested_count {
+            all_candles.1.into_iter().skip(mark_len - requested_count).collect()
+        } else {
+            all_candles.1
+        };
+
+        (last_price_candles, mark_price_candles)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SymbolData {
     pub symbol: String,
@@ -206,6 +399,9 @@ pub struct SymbolData {
 
     // Historical data for strategies
     pub price_history: VecDeque<PriceSnapshot>,
+
+    // Candle buffer for CSV export
+    pub candle_buffer: CandleBuffer,
 }
 
 impl SymbolData {
@@ -217,6 +413,7 @@ impl SymbolData {
             orderbook: None,
             last_update: Utc::now(),
             price_history: VecDeque::new(),
+            candle_buffer: CandleBuffer::new(500), // 500ms candles
         }
     }
 
@@ -224,12 +421,16 @@ impl SymbolData {
         self.current_last_price = Some(price);
         self.last_update = timestamp;
         self.add_to_history();
+        // Update candle buffer
+        self.candle_buffer.add_price_update(Some(price), self.current_mark_price, timestamp);
     }
 
     pub fn update_mark_price(&mut self, price: f64, timestamp: DateTime<Utc>) {
         self.current_mark_price = Some(price);
         self.last_update = timestamp;
         self.add_to_history();
+        // Update candle buffer
+        self.candle_buffer.add_price_update(self.current_last_price, Some(price), timestamp);
     }
 
     pub fn update_orderbook(&mut self, orderbook: ProcessedOrderbook) {

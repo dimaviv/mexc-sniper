@@ -1,12 +1,14 @@
 mod api;
 mod config;
 mod detection;
+mod export;
 mod models;
 mod utils;
 
 use crate::api::{MexcRestClient, MexcWebSocketClient};
 use crate::config::Config;
 use crate::detection::{Strategy1, Strategy2, Strategy3, Strategy4, Strategy5};
+use crate::export::CsvExporter;
 use crate::models::{MarketEvent, SymbolData};
 use crate::utils::EpisodeLogger;
 use dashmap::DashMap;
@@ -64,23 +66,45 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Episode loggers initialized");
 
+    // Initialize CSV exporter if enabled
+    let csv_exporter = if config.csv_export.enabled {
+        let exporter = CsvExporter::new(
+            &config.csv_export.charts_dir,
+            config.csv_export.post_anomaly_recording_secs,
+            symbol_data.clone(),
+        )?;
+        info!("CSV exporter initialized - charts will be saved to: {}", config.csv_export.charts_dir);
+        Some(Arc::new(exporter))
+    } else {
+        info!("CSV export is disabled");
+        None
+    };
+
+    let pre_buffer_secs = config.csv_export.pre_anomaly_buffer_secs;
+
     // Initialize strategies
     let mut strategy1 = Strategy1::new(
         config.strategy1.clone(),
         config.cooldowns.per_symbol_seconds,
         logger1,
+        csv_exporter.clone(),
+        pre_buffer_secs,
     );
 
     let mut strategy2 = Strategy2::new(
         config.strategy2.clone(),
         config.cooldowns.per_symbol_seconds,
         logger2,
+        csv_exporter.clone(),
+        pre_buffer_secs,
     );
 
     let mut strategy3 = Strategy3::new(
         config.strategy3.clone(),
         config.cooldowns.per_symbol_seconds,
         logger3,
+        csv_exporter.clone(),
+        pre_buffer_secs,
     );
 
     let mut strategy4 = Strategy4::new(
@@ -88,6 +112,8 @@ async fn main() -> anyhow::Result<()> {
         config.orderbook.clone(),
         config.cooldowns.per_symbol_seconds,
         logger4,
+        csv_exporter.clone(),
+        pre_buffer_secs,
     );
 
     let mut strategy5 = Strategy5::new(
@@ -99,6 +125,8 @@ async fn main() -> anyhow::Result<()> {
         config.orderbook.clone(),
         config.cooldowns.per_symbol_seconds,
         logger5,
+        csv_exporter.clone(),
+        pre_buffer_secs,
     );
 
     info!("Detection strategies initialized (including Strategy5: Ultra-Strict)");
@@ -179,7 +207,6 @@ async fn main() -> anyhow::Result<()> {
                 .collect();
 
             if symbols_with_data.is_empty() {
-                debug!("[TRACE] No symbols with complete price data yet");
                 continue;
             }
 

@@ -13,6 +13,7 @@ pub struct Config {
     pub strategy3: Strategy3Config,
     pub strategy4: Strategy4Config,
     pub strategy5: Strategy5Config,
+    pub csv_export: CsvExportConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -80,6 +81,15 @@ pub struct Strategy4Config {
 pub struct Strategy5Config {
     pub enabled: bool,
     pub min_price: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CsvExportConfig {
+    pub enabled: bool,
+    pub charts_dir: String,
+    pub pre_anomaly_buffer_secs: i64,
+    pub post_anomaly_recording_secs: i64,
+    pub candle_interval_ms: i64,
 }
 
 impl Config {
